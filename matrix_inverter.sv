@@ -1,72 +1,81 @@
-module matrix_selector #(parameter N_DET = 936, parameter N_ERR = 8784, parameter RANK_MAX = 936)(
+module matrix_inverter #(parameter RANK_MAX = 936, N_DET = 936)(
     input  logic clk,
     input  logic rst,
     input  logic start,
 
-    input  logic [$clog2(N_ERR)-1:0] sorted_indices [0:N_ERR-1],
-    input  logic [N_DET-1:0] H_data_in,
-    output logic [$clog2(N_ERR)-1:0] H_addr,
+    input  logic [N_DET-1:0] Hs_cols [0:RANK_MAX-1], // Full-rank H matrix columns (RANK x N_DET)
+    input  logic [($clog2(RANK_MAX)-1):0] rank_in,
 
     output logic done,
-    output logic [N_DET-1:0] Hs_cols [0:RANK_MAX-1],
-    output logic [$clog2(N_ERR)-1:0] used_indices [0:RANK_MAX-1],
-    output logic [$clog2(RANK_MAX)-1:0] rank_out
+    output logic [N_DET-1:0] H_inv_cols [0:RANK_MAX-1], // Inverted matrix (N_DET x RANK)
+    output logic success
 );
 
-    logic [N_DET-1:0] selected_cols [0:RANK_MAX-1];
-    logic [$clog2(N_ERR)-1:0] selected_indices [0:RANK_MAX-1];
-    logic [$clog2(RANK_MAX)-1:0] rank;
-    logic selecting;
-    logic [$clog2(N_ERR)-1:0] scan_idx;
+  // Local memory copies
+  logic [N_DET-1:0] A [0:RANK_MAX-1];      // Working copy of H
+  logic [N_DET-1:0] I [0:RANK_MAX-1];      // Start as identity matrix
 
-    logic is_indep;
-    logic [N_DET-1:0] xor_chain [0:RANK_MAX];
-    logic [N_DET-1:0] xor_result;
-    
-    // Independence check using XOR chain
-    always_comb begin
-        xor_chain[0] = H_data_in;
-        for (int unsigned i = 0; i < RANK_MAX; i++) begin
-            if (i < rank) begin
-                xor_chain[i+1] = xor_chain[i] ^ selected_cols[i];
-            end else begin
-                xor_chain[i+1] = xor_chain[i];
-            end
+  int unsigned i, j, k;
+  logic working;
+
+  always_ff @(posedge clk or posedge rst) begin
+    if (rst) begin
+      done <= 0;
+      working <= 0;
+      success <= 0;
+    end else begin
+      if (start && !working) begin
+        // Initialize matrices
+        for (i = 0; i < RANK_MAX; i++) begin
+          if (i < rank_in) begin
+            A[i] = Hs_cols[i];
+            I[i] = '0;
+            I[i][i] = 1'b1;
+          end
         end
-        xor_result = xor_chain[rank];
-        is_indep = |xor_result; // Check if any bit is 1 (not zero vector)
-    end
+        working <= 1;
+        done <= 0;
+        success <= 0;
+        j = 0;  // pivot index
+      end
+      else if (working && j < rank_in) begin
+        // Make sure pivot exists
+        if (A[j][j] == 0) begin
+          // Try to swap with a row below
+          for (k = 0; k < RANK_MAX; k++) begin
+            if (k > j && k < rank_in && A[k][j] == 1) begin
+              A[j] ^= A[k];
+              I[j] ^= I[k];
+              break;
+            end
+          end
+        end
 
-    always_ff @(posedge clk or posedge rst) begin
-        if (rst) begin
-            rank <= 0;
-            scan_idx <= 0;
-            selecting <= 0;
-            done <= 0;
+        // If still zero, fail
+        if (A[j][j] == 0) begin
+          done <= 1;
+          success <= 0;
+          working <= 0;
         end else begin
-            if (start && !selecting) begin
-                rank <= 0;
-                scan_idx <= 0;
-                selecting <= 1;
-                done <= 0;
-            end else if (selecting && rank < RANK_MAX && scan_idx < N_ERR) begin
-                H_addr <= sorted_indices[scan_idx];
-                if (is_indep) begin
-                    selected_cols[rank]    <= H_data_in;
-                    selected_indices[rank] <= sorted_indices[scan_idx];
-                    rank <= rank + 1;
-                end
-                scan_idx <= scan_idx + 1;
-                if (rank == $unsigned(RANK_MAX - 1)) begin
-                    selecting <= 0;
-                    done <= 1;
-                end
+          // Eliminate other rows
+          for (i = 0; i < rank_in; i++) begin
+            if (i != j && A[i][j]) begin
+              A[i] ^= A[j];
+              I[i] ^= I[j];
             end
+          end
+          j = j + 1;
+          if (j == rank_in) begin
+            // Done
+            for (i = 0; i < rank_in; i++)
+              H_inv_cols[i] = I[i];
+            done <= 1;
+            success <= 1;
+            working <= 0;
+          end
         end
+      end
     end
-
-    assign Hs_cols = selected_cols;
-    assign used_indices = selected_indices;
-    assign rank_out = rank;
+  end
 
 endmodule
