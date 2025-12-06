@@ -1,4 +1,4 @@
-module osd_systolic_array_tb;
+module osd_tb_systolic;
 
     localparam M = 4; // H_ROW_SIZE (Number of Syndrome Detectors)
     localparam N = 8; // N_COLS (Total Error Locations)
@@ -17,7 +17,7 @@ module osd_systolic_array_tb;
 
     // --- Golden Reference Data ---
     // Input Columns and Indices. The columns are represented LSB (Row 0) to MSB (Row 3).
-    typedef packed struct {
+    typedef struct packed {
         logic [M-1:0] col;
         logic [IDX_W-1:0] idx;
     } col_info_t;
@@ -27,27 +27,27 @@ module osd_systolic_array_tb;
     // The columns are the original H matrix columns (LSB R0 to MSB R3).
     col_info_t H_in_stream[N] = {
         // H_s selected columns (Indices 2, 5, 3, 7) - Must be linearly independent
-        {4'b1001, IDX_W'd2}, // C1 (e2) - [1,0,0,1]^T 
-        {4'b0101, IDX_W'd5}, // C2 (e5) - [1,0,1,0]^T 
-        {4'b1010, IDX_W'd3}, // C3 (e3) - [0,1,0,1]^T 
-        {4'b0110, IDX_W'd7}, // C4 (e7) - [0,1,1,0]^T 
+        {4'b1001, 8'd2}, // C1 (e2) - [1,0,0,1]^T 
+        {4'b0101, 8'd5}, // C2 (e5) - [1,0,1,0]^T 
+        {4'b1010, 8'd3}, // C3 (e3) - [0,1,0,1]^T 
+        {4'b0110, 8'd7}, // C4 (e7) - [0,1,1,0]^T 
         
         // Dependent Columns (e0, e1, e4, e6) - Will be eliminated/discarded
-        {4'b1101, IDX_W'd0}, // C5 (e0) - [1,0,1,1]^T 
-        {4'b1100, IDX_W'd1}, // C6 (e1) - [0,0,1,1]^T 
-        {4'b0010, IDX_W'd4}, // C7 (e4) - [0,1,0,0]^T 
-        {4'b0110, IDX_W'd6}  // C8 (e6) - [0,1,1,0]^T 
+        {4'b1101, 8'd0}, // C5 (e0) - [1,0,1,1]^T 
+        {4'b1100, 8'd1}, // C6 (e1) - [0,0,1,1]^T 
+        {4'b0010, 8'd4}, // C7 (e4) - [0,1,0,0]^T 
+        {4'b0110, 8'd6}  // C8 (e6) - [0,1,1,0]^T 
     };
 
     col_info_t H_inv_expected[M] = {
         // Output 1 (from PE0, index 2): Column [1, 0, 0, 1]^T
-        {4'b1001, IDX_W'd2}, 
+        {4'b1001, 8'd2}, 
         // Output 2 (from PE1, index 5): Column [0, 1, 0, 1]^T
-        {4'b1010, IDX_W'd5}, 
+        {4'b1010, 8'd5}, 
         // Output 3 (from PE2, index 3): Column [1, 0, 1, 1]^T
-        {4'b1101, IDX_W'd3},
+        {4'b1101, 8'd3},
         // Output 4 (from PE3, index 7): Column [0, 0, 0, 1]^T
-        {4'b1000, IDX_W'd7}
+        {4'b1000, 8'd7}
     };
     
     // --- Golden Reference Checker Class (Gaussian Elimination over F2) ---
@@ -83,12 +83,12 @@ module osd_systolic_array_tb;
             end else if (selected_count < M) begin
                 $display("Checker: Discarded column (Index %0d) - linearly dependent or wrong pivot.", new_idx);
             end
-        end
+        endfunction
 
         // Function to perform full matrix inversion
         function void perform_inversion();
             logic [M-1:0] H_s_full[M];     // H_s matrix formed by original columns
-            logic [M-1:0] A_aug[M][2*M];   // Augmented matrix [H_s | I]
+            logic [M-1:0] A_aug[M][N];   // Augmented matrix [H_s | I]
             
             $display("Checker: Starting Inversion on selected H_s.");
             
@@ -116,16 +116,22 @@ module osd_systolic_array_tb;
                 if (p < M) begin
                     // Swap rows if necessary
                     if (p != j) begin
-                        logic [2*M-1:0] temp_row;
-                        temp_row = A_aug[j];
+                        logic [N-1:0] temp_row;
+                        foreach (temp_row[i]) begin
+                            temp_row[i] = A_aug[j][i];
+                        end
                         A_aug[j] = A_aug[p];
-                        A_aug[p] = temp_row;
+                        foreach(temp_row[i]) begin
+                            A_aug[p][i] = temp_row[i];
+                        end 
                     end
                     
                     // Eliminate other rows (above and below pivot)
                     for (int i = 0; i < M; i++) begin
                         if (i != j && A_aug[i][j] == 1) begin
-                            A_aug[i] = A_aug[i] ^ A_aug[j]; // XOR row operation
+                            foreach(A_aug[i,k]) begin
+                                A_aug[i][k] = A_aug[i][k] ^ A_aug[j][k]; // XOR row operation
+                            end
                         end
                     end
                 end
@@ -160,12 +166,12 @@ module osd_systolic_array_tb;
                 end
             end
             return errors;
-        end
+        endfunction
     endclass
 
     GoldenChecker checker_handle;
 
-    osd_systolic_array_top #(.H_ROW_SIZE(M), .IDX_SIZE(IDX_W), .N_COLS(N))
+    osd_top #(.H_ROW_SIZE(M), .IDX_SIZE(IDX_W), .N_COLS(N))
     DUT (
         .clk(clk),
         .reset(reset),
@@ -184,7 +190,7 @@ module osd_systolic_array_tb;
     initial begin
         int errors;
         col_info_t dut_output_array[M];
-        int output_count = 0;
+        automatic int output_count = 0;
         
         checker_handle = new();
 
@@ -227,7 +233,7 @@ module osd_systolic_array_tb;
         // 5. Run Golden Reference Inversion and Compare
         if (checker_handle.selected_count != M) begin
             $fatal(1, "Checker failed to select a full-rank M=%0d submatrix. Selection count was %0d.", M, checker_handle.selected_count);
-        }
+        end
         
         // Compare DUT output array (sorted by PE) with the hardcoded expected array.
         errors = checker_handle.check_output(dut_output_array);
