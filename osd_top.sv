@@ -1,5 +1,5 @@
 //  OSD Systolic Array Top Module with FSM Control 
-module osd_top #(parameter H_ROW_SIZE = 3, parameter IDX_SIZE = 8, parameter N_COLS = 8)
+module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_COLS = 8)
 (
     input wire clk,
     input wire reset,
@@ -152,6 +152,7 @@ module osd_top #(parameter H_ROW_SIZE = 3, parameter IDX_SIZE = 8, parameter N_C
                 0: {output_col_reg, output_idx_reg, output_valid_reg} <= {pe_inv_out_col[0], pe_inv_out_idx[0], pe_inv_out_valid[0]};
                 1: {output_col_reg, output_idx_reg, output_valid_reg} <= {pe_inv_out_col[1], pe_inv_out_idx[1], pe_inv_out_valid[1]};
                 2: {output_col_reg, output_idx_reg, output_valid_reg} <= {pe_inv_out_col[2], pe_inv_out_idx[2], pe_inv_out_valid[2]};
+                3: {output_col_reg, output_idx_reg, output_valid_reg} <= {pe_inv_out_col[3], pe_inv_out_idx[3], pe_inv_out_valid[3]};
                 default: {output_col_reg, output_idx_reg, output_valid_reg} <= 0;
             endcase
         end else begin

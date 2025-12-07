@@ -1,6 +1,6 @@
 // --- OSD Processing Element (PE) ---
 
-module osd_pe #( parameter H_ROW_SIZE = 3, parameter IDX_SIZE   = 8, parameter P_POS = 0)
+module osd_pe #( parameter H_ROW_SIZE = 4, parameter IDX_SIZE   = 8, parameter P_POS = 0)
 (
     input logic clk,
     input logic reset,
