@@ -5,8 +5,6 @@ module osd_pe #( parameter H_ROW_SIZE = 4, parameter IDX_SIZE   = 8, parameter P
     input logic clk,
     input logic reset,
     
-
-    
     // Inputs from the left (or Top)
     input logic [H_ROW_SIZE-1:0] in_col,
     input logic [IDX_SIZE-1:0] in_idx,
@@ -56,6 +54,7 @@ module osd_pe #( parameter H_ROW_SIZE = 4, parameter IDX_SIZE   = 8, parameter P
                     // 2. Perform Gaussian Elimination
                     else if (is_fixed && in_col[P_POS]) begin
                         out_col <= in_col ^ fixed_col;
+			out_col[P_POS] <= 1; 
                         out_idx <= in_idx;
                         out_valid <= 1'b1;
                     end

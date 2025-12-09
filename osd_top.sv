@@ -1,17 +1,25 @@
+
 //  OSD Systolic Array Top Module with FSM Control 
 module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_COLS = 8)
 (
-    input wire clk,
-    input wire reset,
+    input logic clk,
+    input logic reset,
     
     // Inputs (from BP Sorting Module)
-    input wire [H_ROW_SIZE-1:0] sorted_col_in,  // H column
-    input wire [IDX_SIZE-1:0] sorted_idx_in,    // Index (tag)
+    input logic [H_ROW_SIZE-1:0] sorted_col_in,  // H column
+    input logic [IDX_SIZE-1:0] sorted_idx_in,    // Index (tag)
+    
+    // NEW: Input for the Solver (The error pattern we are trying to fix)
+    input logic [H_ROW_SIZE-1:0] syndrome_in,
     
     // Outputs (Inverse Matrix Stream)
-    output wire [H_ROW_SIZE-1:0] h_inv_col_out,
-    output wire [IDX_SIZE-1:0] h_inv_idx_out,
-    output wire h_inv_out_valid
+    output logic [H_ROW_SIZE-1:0] h_inv_col_out,
+    output logic [IDX_SIZE-1:0] h_inv_idx_out,
+    output logic h_inv_out_valid,
+    
+    // NEW: Final Answer from the Solver
+    output logic [N_COLS-1:0]     final_e_hat,
+    output logic final_done
 );
 
      // M: Number of Syndromes/Detectors
@@ -27,10 +35,12 @@ module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_C
 
     logic [1:0] state = S_IDLE;
     logic [IDX_SIZE-1:0] cycle_counter = 0;
+    logic [1:0] lse_state_in = 0;
     
     // Control Wires
     logic  forward_in_valid = 1'b0;
     logic  backwards_en = 1'b0;
+    logic systolic_done = 1'b0;
 
     // Wires connecting the PEs
     logic [NUM_PES:0][H_ROW_SIZE-1:0] pe_col_w;
@@ -53,7 +63,7 @@ module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_C
             case (state)
                 S_IDLE: begin
                     // Wait for start signal (e.g., BP failure)
-                    if (/* start_signal */ 1'b1) begin // Assume immediate start for demo
+                    if (!systolic_done) begin // Assume immediate start for demo
                         state <= S_FORWARD_INPUT;
                         cycle_counter <= 0;
                         forward_in_valid <= 1'b1;
@@ -87,6 +97,7 @@ module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_C
                     if (cycle_counter == NUM_PES - 1) begin
                         state <= S_IDLE;
                         backwards_en <= 1'b0;
+                        systolic_done <= 1'b1;
                     end
                 end
             endcase
@@ -140,9 +151,9 @@ module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_C
     // We will use a simple fixed output for this conceptual model, assuming a linear 
     // sequence from P0 to PM-1 is sufficient to represent the M output cycles.
     
-    reg [H_ROW_SIZE-1:0] output_col_reg = 0;
-    reg [IDX_SIZE-1:0] output_idx_reg = 0;
-    reg output_valid_reg = 0;
+    logic [H_ROW_SIZE-1:0] output_col_reg = 0;
+    logic [IDX_SIZE-1:0] output_idx_reg = 0;
+    logic output_valid_reg = 0;
     
     // Output selector for the inverse column
     always @(posedge clk) begin
@@ -164,4 +175,75 @@ module osd_top #(parameter H_ROW_SIZE = 4, parameter IDX_SIZE = 8, parameter N_C
     assign h_inv_idx_out = output_idx_reg;
     assign h_inv_out_valid = output_valid_reg;
 
+    // NEW SECTION: INTEGRATION WITH LSE SOLVER
+
+    // 1. Determine Solver Index Width
+    // Solver uses $clog2(N_ERR). For N_COLS=8, this is 3 bits.
+    localparam SOLVER_IDX_W = $clog2(N_COLS);
+
+    // 2. The Buffers
+    logic [H_ROW_SIZE-1:0] H_inv_matrix_buffer [0:H_ROW_SIZE-1];
+    
+    // Define buffer with the width the SOLVER expects (3 bits)
+    logic [SOLVER_IDX_W-1:0] indices_buffer_compact [0:H_ROW_SIZE-1];
+    
+    logic [IDX_SIZE-1:0]   buffer_counter;
+    
+    // Changed: 'matrix_loaded' is no longer a latching flag, we use a pulse register
+    logic                  start_solver_pulse;
+    
+    always_ff @(posedge clk) begin
+        if(reset) begin
+            lse_state_in <= S_IDLE;
+        end 
+        else begin
+            lse_state_in <= state;
+        end
+     end
+        
+    // 3. Buffer Capture & Trigger Logic
+    always_ff @(posedge clk) begin
+        if (reset) begin
+            buffer_counter <= 0;
+            start_solver_pulse <= 0;
+        end else if (lse_state_in == S_BACKWARDS_OUTPUT && h_inv_out_valid) begin
+            // Store Column
+            H_inv_matrix_buffer[buffer_counter] <= h_inv_col_out;
+            
+            // Truncate the 8-bit index down to 3 bits for the solver
+            indices_buffer_compact[buffer_counter] <= h_inv_idx_out[SOLVER_IDX_W-1:0];
+            
+            buffer_counter <= buffer_counter + 1;
+        end else if (lse_state_in == S_IDLE && buffer_counter == NUM_PES && !start_solver_pulse) begin
+            // Pulse the start signal exactly once when back in IDLE with a full buffer
+            start_solver_pulse <= 1;
+        end else begin
+            start_solver_pulse <= 0; // Clear pulse immediately
+        end
+    end
+
+    // 4. Trigger Logic
+    logic start_solver;
+    assign start_solver = start_solver_pulse;
+
+    // 5. Instantiate the Solver
+    lse_solver #(
+        .RANK_MAX(H_ROW_SIZE), 
+        .N_ERR(N_COLS) 
+    ) u_solver (
+        .clk(clk),
+        .rst(reset),
+        .start(start_solver),
+        .syndrome(syndrome_in),
+        .H_inv_cols(H_inv_matrix_buffer),
+        
+        // Connect the COMPACT buffer (3 bits) instead of the 8-bit one
+        .used_indices(indices_buffer_compact),
+        
+        // Cast NUM_PES to correct width
+        .rank_in(NUM_PES[$clog2(H_ROW_SIZE+1)-1:0]),
+        
+        .e_hat(final_e_hat),
+        .done(final_done)
+    );
 endmodule

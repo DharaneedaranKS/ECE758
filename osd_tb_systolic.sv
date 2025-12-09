@@ -11,9 +11,16 @@ module osd_tb_systolic;
     logic [IDX_W-1:0] sorted_idx_in;
     logic forward_in_valid_tb;
     
+    // NEW: Syndrome Input
+    logic [M-1:0] syndrome_tb; 
+    
     logic [M-1:0] h_inv_col_out;
     logic [IDX_W-1:0] h_inv_idx_out;
     logic h_inv_out_valid;
+   
+    // NEW: Outputs from Solver
+    logic [N-1:0] final_e_hat_tb;
+    logic final_done_tb;
 
     // --- Golden Reference Data ---
     // Input Columns and Indices. The columns are represented LSB (Row 0) to MSB (Row 3).
@@ -177,7 +184,10 @@ module osd_tb_systolic;
         .sorted_idx_in(sorted_idx_in),
         .h_inv_col_out(h_inv_col_out),
         .h_inv_idx_out(h_inv_idx_out),
-        .h_inv_out_valid(h_inv_out_valid)
+        .h_inv_out_valid(h_inv_out_valid),
+        .syndrome_in(syndrome_tb),
+        .final_e_hat(final_e_hat_tb),
+        .final_done(final_done_tb)
     );
 
     initial begin
@@ -195,6 +205,10 @@ module osd_tb_systolic;
         // 1. Reset DUT
         reset = 1;
         forward_in_valid_tb = 0;
+        
+        // SET THE SYNDROME TO 1011
+        syndrome_tb = 4'b1011;
+        
         @(posedge clk);
         #CLK_PERIOD;
         reset = 0;
@@ -220,6 +234,9 @@ module osd_tb_systolic;
         repeat (M + 1) @(posedge clk); 
         
         $display("\n--- Starting Backwards Elimination/Output Phase (M=%0d cycles) ---", M);
+        // Wait for backwards phase to complete (M cycles)
+        // During this phase, osd_top buffers the inverse columns into the solver
+        // repeat (M + 1) @(posedge clk);
         
         for (int i = 0; i < M; i++) begin
             @(posedge clk);
@@ -243,6 +260,40 @@ module osd_tb_systolic;
         end else begin
             $error("### TEST FAILED! ### Total errors: %0d", errors);
         end
+        
+              // --- NEW DEBUG SECTION ---
+        
+        // Print the contents of the buffers that osd_top passed to the LSE Solver
+        @(posedge clk);
+        $display("\n========================================");
+        $display("   DEBUG: BUFFERED MATRIX FOR SOLVER");
+        $display("========================================");
+        for (int k = 0; k < M; k++) begin
+            $display("Buffer Slot %0d: Column = %b (0x%h) | Compact Index = %0d", 
+                     k, DUT.H_inv_matrix_buffer[k], DUT.H_inv_matrix_buffer[k], DUT.indices_buffer_compact[k]);
+        end
+        $display("========================================\n");
+        // -------------------------
+        
+        
+        $display("\n--- Waiting for LSE Solver ---");
+        
+        // Timeout watchdog
+        fork
+            begin
+                wait(final_done_tb);
+                $display("\n========================================");
+                $display("       LSE SOLVER COMPLETED");
+                $display("========================================");
+                $display("Syndrome Input: %b", syndrome_tb);
+                $display("Final Error Vector (e_hat): %b", final_e_hat_tb);
+                $display("========================================");
+            end
+            begin
+                repeat(50) @(posedge clk);
+                $display("\nError: LSE Solver Timeout!");
+            end
+        join_any
         
         $finish;
     end
