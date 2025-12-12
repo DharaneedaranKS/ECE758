@@ -7,7 +7,8 @@ module serial_sorter #(
     input  wire             load_en,
     input  wire [WIDTH-1:0] data_in,
     input  wire             clear,
-    output wire             out_vld,
+    output logic             out_vld,
+    output logic             activate_systolic_array,
     output wire [WIDTH-1:0] data_out [NUM_NODES:0],
     output wire [$clog2(NUM_NODES)-1:0] idx_out [NUM_NODES:0]
 );
@@ -26,7 +27,7 @@ module serial_sorter #(
     assign data_out[NUM_NODES] = {WIDTH{1'b1}};
     //assign data_out = left_wires[0];        // Output comes from Node 0
     assign index[0] = idx;
-    assign out_vld = &tmr;
+    //assign out_vld = &tmr;
     //assign clear = ~|tmr && !load_en;
     genvar i;
     generate
@@ -52,29 +53,34 @@ module serial_sorter #(
         end
     endgenerate
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always_ff @(posedge clk or posedge rst_n) begin
+        if (rst_n) begin
             idx <= 0;
             keep_running <= 0;
             tmr <= 0;
+            out_vld <= 0;
         end
         else if (clear) begin
             idx <= 0;
             keep_running <= 0;
             tmr <= 0;
+            out_vld <= 0;
         end
         else if (load_en) begin
-            idx <= idx + 1;
+            idx <= idx + keep_running;
             keep_running <= 1;
-            tmr <= tmr + 1;
+            tmr <= tmr + keep_running;
         end
         else begin
             //idx <= 0;
             tmr <= keep_running ? tmr + 1 : 0;
             keep_running <= tmr > 0;
+            out_vld <= &tmr ? 1 : out_vld;
         end
 
     end
+    
+    assign activate_systolic_array = &tmr;
 
 
 endmodule

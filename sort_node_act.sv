@@ -33,8 +33,8 @@ module sort_node_act #(
     assign idx_out      = R_idx;
     assign my_idx       = L_idx;
 
-    always_ff @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
+    always_ff @(posedge clk or posedge rst_n) begin
+        if (rst_n) begin
             L_reg         <= MAX_VAL;
             L_idx         <= 0;
             R_reg         <= MAX_VAL;

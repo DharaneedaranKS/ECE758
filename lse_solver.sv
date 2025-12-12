@@ -102,7 +102,7 @@ module lse_solver #(parameter RANK_MAX = 936, N_ERR = 8784)(
                 end
 
                 EXPAND: begin
-                    // This is the *original* expand loop. It's already pipelined.
+                  
                     e_hat[used_indices[j]] <= e_compact[j];
                     
                     if (j == rank_in - 1) begin
